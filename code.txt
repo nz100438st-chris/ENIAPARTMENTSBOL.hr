@@ -1,0 +1,78 @@
+from flask import Flask, render_template, request, redirect, session
+import stripe
+import sendgrid
+from sendgrid.helpers.mail import Mail
+
+app = Flask(__name__)
+app.secret_key = "your-secret-key"
+
+stripe.api_key = "your-stripe-api-key"
+
+sendgrid_api_key = "your-sendgrid-api-key"
+sendgrid_sender_email = "sender-email@example.com"
+recipient_email = "your-email@example.com"
+
+apartments = [
+    {"id": 1, "name": "Studio Apartment", "price_per_night": 50},
+    {"id": 2, "name": "Regular Apartment", "price_per_night": 100}
+]
+
+@app.route("/")
+def index():
+    return render_template("index.html", apartments=apartments)
+
+@app.route("/select_dates/<int:apartment_id>")
+def select_dates(apartment_id):
+    apartment = next((a for a in apartments if a["id"] == apartment_id), None)
+    if apartment:
+        return render_template("select_dates.html", apartment=apartment)
+    else:
+        return "Apartment not found."
+
+@app.route("/booking_confirmation", methods=["POST"])
+def booking_confirmation():
+    apartment_id = int(request.form["apartment_id"])
+    start_date = request.form["start_date"]
+    end_date = request.form["end_date"]
+    email = request.form["email"]
+    apartment = next((a for a in apartments if a["id"] == apartment_id), None)
+
+    if apartment and start_date and end_date and email:
+        # Calculate the duration of stay
+        duration = (int(end_date) - int(start_date)) + 1
+        total_price = apartment["price_per_night"] * duration
+
+        # Create a Stripe Payment Intent
+        intent = stripe.PaymentIntent.create(
+            amount=int(total_price * 100),  # Stripe uses cents as the currency unit
+            currency="usd"
+        )
+
+        # Send booking confirmation email
+        send_booking_confirmation_email(email, apartment, start_date, end_date, total_price)
+
+        return render_template("booking_confirmation.html", email=email, apartment=apartment,
+                               start_date=start_date, end_date=end_date, total_price=total_price,
+                               client_secret=intent.client_secret)
+    else:
+        return "Invalid form submission."
+
+def send_booking_confirmation_email(email, apartment, start_date, end_date, total_price):
+    message = Mail(
+        from_email=sendgrid_sender_email,
+        to_emails=email,
+        subject="Apartment Booking Confirmation",
+        html_content=f"Thank you for booking {apartment['name']}!<br><br>"
+                     f"Booking details:<br>"
+                     f"Apartment: {apartment['name']}<br>"
+                     f"Start Date: {start_date}<br>"
+                     f"End Date: {end_date}<br>"
+                     f"Total Price: ${total_price}<br><br>"
+                     f"We look forward to hosting you. If you have any questions, feel free to contact us."
+    )
+
+    sg = sendgrid.SendGridAPIClient(api_key=sendgrid_api_key)
+    sg.send(message)
+
+if __name__ == "__main__":
+    app.run()
